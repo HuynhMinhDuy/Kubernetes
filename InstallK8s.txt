@@ -1,0 +1,129 @@
+
+1. Turn off swap :
+	sudo swapoff -a
+		
+2. Disable Firewal : 
+	systemctl stop firewalld
+	systemctl disable firewalld	
+	
+
+3. Enable the bridged traffic
+ $ lsmod | grep br_netfilter
+ $ sudo modprobe br_netfilter
+ 
+ 
+4. Setup HostName :
+	vi /etc/hosts
+	
+	example :
+		kmaster 10.40.180.180  
+		kworker  10.40.180.181  
+    
+    Run this command :
+      hostnamectl set-hostname worker2
+
+5. Run 2 below commands : 
+	
+	cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+	br_netfilter
+	EOF
+	
+	cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+	net.bridge.bridge-nf-call-ip6tables = 1
+	net.bridge.bridge-nf-call-iptables = 1
+	EOF
+
+  Check :	
+	  sudo sysctl --system
+		
+	
+6. Install Docker [Container Runtime for Master and Worker Nodes][All Nodes]:
+	sudo yum install -y yum-utils device-mapper-persistent-data lvm2
+	sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+	sudo yum install -y docker-ce docker-ce-cli containerd.io 
+	sudo systemctl start docker
+		
+		
+		
+7. Install Kubernetes [All Nodes] : 
+		
+	cat <<EOF | sudo tee /etc/yum.repos.d/kubernetes.repo
+	[kubernetes]
+	name=Kubernetes
+	baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-\$basearch
+	enabled=1
+	gpgcheck=1
+	gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+	exclude=kubelet kubeadm kubectl
+	EOF
+
+	sudo setenforce 0
+
+	sudo sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
+
+	sudo yum install -y kubelet-1.26.0-0 kubeadm-1.26.0-0 kubectl-1.26.0-0 --disableexcludes=kubernetes
+	
+	[sudo yum remove -y kubelet kubeadm kubectl ]
+
+
+	sudo systemctl enable --now kubelet
+
+  Check :
+    systemctl status kubelet
+    systemctl stop kubelet
+
+	
+8. Create cluster using kubeadm [Master Node Only] : 
+    kubeadm init --pod-network-cidr=192.168.0.0/16 --apiserver-advertise-address={{IP_ADDR_MASTER}}
+
+      e.g : kubeadm init --pod-network-cidr=192.168.1.0/24 --apiserver-advertise-address=10.40.180.179 --kubernetes-version=v1.26.0
+
+          kubeadm init --pod-network-cidr=192.168.0.0/16 --apiserver-advertise-address=10.40.180.179
+
+          if it does work : --> 
+            sudo rm /etc/containerd/config.toml
+            sudo systemctl restart containerd
+
+      Note: Remember the command to join worker nodes to master node. e.g :  kubeadm join ....
+			
+	
+9. Run follow command [Master Node Only]:
+	mkdir -p $HOME/.kube
+	sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+	sudo chown $(id -u):$(id -g) $HOME/.kube/config
+				
+
+10. Install network plugin Calio :
+	
+		VER=$(curl -s https://api.github.com/repos/projectcalico/calico/releases/latest|grep tag_name|cut -d '"' -f 4)
+		
+		wget https://raw.githubusercontent.com/projectcalico/calico/${VER}/manifests/tigera-operator.yaml
+		kubectl create -f tigera-operator.yaml
+		
+		wget https://raw.githubusercontent.com/projectcalico/calico/${VER}/manifests/custom-resources.yaml
+		kubectl create -f custom-resources.yaml			
+		
+		
+
+	Old -- > Install Networking component (CNI)[Master Node] : 
+			kubectl apply -f https://projectcalico.docs.tigera.io/manifests/calico.yaml		
+			kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.1/manifests/tigera-operator.yaml
+			
+			kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.1/manifests/tigera-operator.yaml
+			kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.1/manifests/custom-resources.yaml
+			
+			kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.1/manifests/tigera-operator.yaml
+			kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.1/manifests/custom-resources.yaml
+			
+			kubectl delete -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.1/manifests/tigera-operator.yaml
+			kubectl delete -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.1/manifests/custom-resources.yaml
+
+
+kubectl create -f https://docs.projectcalico.org/v3.6/getting-started/kubernetes/installation/hosted/kubernetes-datastore/calico-networking/1.7/calico.yaml
+		
+		
+Join the worker node to Master Node [Worker Node] :
+		Use command suggest when create cluster
+		e.g : 
+	
+		kubeadm join 10.40.180.179:6443 --token nqyvpf.5eoweuxb5u2c9n1h --discovery-token-ca-cert-hash sha256:2629f87f03399e3dc49b4a9e123e936f2206a0be63a7ca15d75d706e123975fd
